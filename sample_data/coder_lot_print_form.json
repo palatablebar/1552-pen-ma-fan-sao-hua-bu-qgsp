@@ -1,0 +1,24 @@
+{
+  "key": "DC-1101",
+  "cohort": "袋装B线",
+  "day": 2,
+  "received": 3,
+  "revision": 1,
+  "result_day": 5,
+  "outcome": 11.63143,
+  "observed": true,
+  "form": {
+    "喷嘴参数": {
+      "web_cm_per_minute": 19000,
+      "nozzle_microns": 10000
+    },
+    "生产走膜": {
+      "ink_use_minutes": 3300,
+      "film_millinewton": 128000
+    },
+    "取像记录": {
+      "reflection_basis_points": 2900,
+      "camera_snapshots": 22
+    }
+  }
+}
