@@ -4,6 +4,16 @@ from math import exp, isfinite
 
 from .contracts import RuleNotice, Job, Plan, Policy, RISK_CUTOFF
 from .constraints import WorkOrder, apply_camera_backlog
+from .reshoot import (
+    FRAME_LIMIT,
+    certify_feature_reshoot,
+    certify_minimum_reshoot,
+    certify_reshoot,
+    clear_frame_count,
+    evaluate_reshoot_sequence,
+    minimum_reshoot_count,
+    verification_requirement,
+)
 
 
 def measures(raw):
@@ -41,7 +51,7 @@ def confidence_weight(estimate, cutoff):
     return bounded / (1 + bounded)
 
 
-def recommend(assessment, attention, policy):
+def recommend(assessment, attention, policy, reshoot_review=frozenset()):
     raw = assessment.raw
     data = measures(raw.input_values)
     estimate = assessment.estimate
@@ -58,6 +68,10 @@ def recommend(assessment, attention, policy):
         state = '人工判读'
         reason = 'OUT_OF_REFERENCE' if raw.key in attention else 'INSUFFICIENT_CALIBRATION'
         summary = '分布偏移或校准量不足，需核对原始单据'
+    elif raw.key in reshoot_review and (domain_codes or estimate >= policy.trigger):
+        state = '人工判读'
+        reason = 'FRAME_BUDGET_REVIEW'
+        summary = '补拍试算在量测上限内无法满足上沿核验量，需人工安排'
     elif domain_codes or estimate >= policy.trigger:
         state = '候选'
         reason = domain_codes[0].rule_id if domain_codes else 'ABOVE_TRIGGER'
@@ -97,12 +111,12 @@ class ShiftAllocation:
         return True
 
 
-def allocate(assessments, attention, policy):
+def allocate(assessments, attention, policy, reshoot_review=frozenset()):
     desk=ShiftAllocation(policy)
     triaged={}
     route=[]
     for observation in assessments:
-        ticket=recommend(observation,attention,policy)
+        ticket=recommend(observation,attention,policy,reshoot_review)
         if ticket.key in triaged:
             raise ValueError('出现重复作业单据')
         triaged[ticket.key]=ticket
@@ -120,8 +134,54 @@ def allocate(assessments, attention, policy):
     return Plan(tuple(rowlist),policy.capacity,desk.remainder,tuple(sorted(desk.load.items())))
 
 
-def plan_jobs(assessments, attention, capacity, mode='balanced'):
-    return allocate(assessments, frozenset(attention), Policy.select(capacity, mode))
+def collect_reshoot_review(*sources):
+    keys = set()
+    for source in sources:
+        if source is None:
+            continue
+        if isinstance(source, str):
+            keys.add(source)
+            continue
+        if isinstance(source, dict):
+            for key, value in source.items():
+                if isinstance(key, str) and _certificate_requests_review(value, default=True):
+                    keys.add(key)
+            continue
+        for item in source:
+            if isinstance(item, str):
+                keys.add(item)
+            elif isinstance(item, dict):
+                key = item.get('key') or item.get('关联单据') or item.get('单号')
+                if key and _certificate_requests_review(item, default=False):
+                    keys.add(key)
+            else:
+                key = getattr(item, 'key', None)
+                if key and getattr(item, 'manual_review', False):
+                    keys.add(key)
+    return frozenset(keys)
+
+
+def _certificate_requests_review(value, *, default):
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, dict):
+        manual = value.get('manual_review', value.get('转人工'))
+        if manual is None:
+            status = value.get('status') or value.get('核定状态')
+            manual = status in {'MANUAL_REVIEW', '转人工'}
+        return bool(manual)
+    manual = getattr(value, 'manual_review', None)
+    return bool(manual) if manual is not None else default
+
+
+def plan_jobs(assessments, attention, capacity, mode='balanced', reshoot_review=frozenset(),
+              *, certificates=None, reshoot_plans=None, frame_certificates=None):
+    review = collect_reshoot_review(
+        reshoot_review, certificates, reshoot_plans, frame_certificates
+    )
+    return allocate(assessments, frozenset(attention), Policy.select(capacity, mode), review)
 
 
 def action_evidence(plan):
@@ -146,3 +206,10 @@ def operating_group(assessments, progression):
         band=frame_segment(source[work.key])
         cells[work.cohort,band] += work.cost
     return [{ '作业区': zone, '返扫窗': band, '班组用量': total } for (zone,band),total in sorted(cells.items())]
+
+
+def __getattr__(name):
+    from . import reshoot as _reshoot_compat
+    if hasattr(_reshoot_compat, name):
+        return getattr(_reshoot_compat, name)
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

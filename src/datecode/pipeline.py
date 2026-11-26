@@ -63,6 +63,7 @@ def rows_for(plan, scored, vectors):
             driver = ' · '.join(f'{amount:+.2f}' for amount in point.contributions)
         interval = ('–' if job.lower is None else f'{job.lower:.2f}–{job.upper:.2f}')
         order.append({'key': job.key, 'zone': job.cohort, 'estimate': job.estimate, 'interval': interval,
+                      'lower': job.lower, 'upper': job.upper,
                       'state': job.state, 'cost': job.cost, 'reason': job.reason, 'evidence': job.summary,
                       'drivers': driver, 'missing': len(point.missing), 'hits': list(job.rule_hits),
                       'measurements': dict(zip(('speed', 'head_gap', 'ink_age', 'film_tension', 'specular', 'frames'), point.input_values, strict=True)),
@@ -103,7 +104,22 @@ def execute(documents, capacity=12, mode='balanced', *, as_of=96):
     baseline = monitor_service.fit_baseline(features.train, state.fingerprint)
     drift = monitor_service.scan_current(baseline, features.live, state.fingerprint)
     coverage = monitor_service.coverage_by_group(features.calibration, features.live)
-    allocation = dispatch_service.plan_jobs(checked_live, drift.domain, capacity, mode)
+    vectors = {item.key: item for item in features.live}
+    assessments = {item.raw.key: item for item in checked_live}
+    reshoot_decisions = {
+        item.key: dispatch_service.certify_feature_reshoot(
+            item,
+            state,
+            kernel,
+            fitted_calibration,
+            current_assessment=assessments.get(item.key),
+        )
+        for item in features.live
+    }
+    reshoot_review = {key for key, decision in reshoot_decisions.items() if decision.manual_review}
+    allocation = dispatch_service.plan_jobs(
+        checked_live, drift.domain, capacity, mode, reshoot_review=reshoot_review
+    )
     closed = audit_service.close_batch(documents, intake, windows, allocation, state.fingerprint, kernel.name, mode)
     states = dict(closed.totals.states)
     overview = [
@@ -113,8 +129,20 @@ def execute(documents, capacity=12, mode='balanced', *, as_of=96):
         {'label': '暂停及人工判读', 'value': states.get('暂停', 0) + states.get('人工判读', 0)},
         {'label': '额度结余', 'value': allocation.balance},
     ]
-    vectors = {item.key: item for item in features.live}
     row_list = rows_for(allocation, scored, vectors)
+    for row in row_list:
+        decision = reshoot_decisions[row['key']]
+        row['reshoot'] = decision.to_dict()
+        row['补拍依据'] = decision.basis
+        row['reshoot_basis'] = decision.basis
+        row['minimum_reshoot'] = decision.minimum
+        row['reshoot_count'] = decision.minimum
+        row['approved_reshoot'] = decision.minimum if decision.signed else None
+        row['minimum_supplemental_frames'] = decision.minimum
+        row['最少补拍量'] = decision.minimum
+        row['核定补拍量'] = decision.minimum if decision.signed else None
+        row['reshoot_manual_review'] = decision.manual_review
+        row['补拍转人工'] = decision.manual_review
     operating_rows = dispatch_service.operating_ledger(row_list)
     overtime = calibration_service.boundary_diagnostics(evaluated, 12)
     sector = calibration_service.sector_replay(evaluated, 12)
@@ -164,3 +192,15 @@ def execute(documents, capacity=12, mode='balanced', *, as_of=96):
 def preview(capacity=12, mode='balanced'):
     fixture = open_fixture()
     return execute(fixture['records'], capacity, mode, as_of=fixture['as_of'])
+
+
+certify_reshoot = dispatch_service.certify_reshoot
+certify_minimum_reshoot = dispatch_service.certify_minimum_reshoot
+reshoot_certificate = dispatch_service.certify_feature_reshoot
+minimum_reshoot_count = dispatch_service.minimum_reshoot_count
+
+
+def __getattr__(name):
+    if hasattr(dispatch_service, name):
+        return getattr(dispatch_service, name)
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

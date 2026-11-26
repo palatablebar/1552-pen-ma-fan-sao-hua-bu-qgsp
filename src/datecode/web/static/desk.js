@@ -83,6 +83,28 @@ function renderMeasurements(card, row) {
     const operations = node('dl',undefined,'record-fields');
     for (const [name,value] of row.operations) operations.append(node('dt',name),node('dd',value));
     card.append(node('h3','作业量计算','inner-heading'),operations);
+    if (row.reshoot) {
+        const reshoot = row.reshoot;
+        card.append(node('h3','补拍核定','inner-heading'));
+        const certificate = node('dl',undefined,'record-fields');
+        const certificateFields = [
+            ['核定状态', reshoot['核定状态']],
+            ['最少补拍量', reshoot.minimum === null || reshoot.minimum === undefined ? '转人工' : `${reshoot.minimum} 张`],
+            ['补拍后区间', reshoot.upper === null || reshoot.upper === undefined ? '缺区间' : `${valueOf(reshoot.lower)}–${valueOf(reshoot.upper)}`],
+            ['核验需求量', reshoot.required],
+            ['预计清晰帧', reshoot.clean_frames],
+            ['量测上限', `${reshoot.frame_limit} 帧`],
+            ['补拍依据', reshoot.basis],
+        ];
+        for (const [name,value] of certificateFields) certificate.append(node('dt',name),node('dd',value));
+        card.append(certificate);
+        if (reshoot.trials?.length) {
+            const trials = node('details',undefined,'rejected');
+            trials.append(node('summary',`补拍试算轨迹 · ${reshoot.trials.length} 次`));
+            showTables(trials,reshoot.trials);
+            card.append(trials);
+        }
+    }
     if (row.joint_experiments.length) {
         const joint = node('details',undefined,'rejected');
         joint.append(node('summary','联动推演'));
@@ -151,7 +173,7 @@ function showQueue() {
     const sought = byId('filter').value.trim().toLocaleLowerCase('zh-CN');
     const state = byId('status-filter').value;
     const rows = ledger.rows.filter(item => (!state || item.state === state) &&
-          (!sought || [item.key,item.zone,item.reason,item.evidence].some(text => text.toLocaleLowerCase('zh-CN').includes(sought))));
+          (!sought || [item.key,item.zone,item.reason,item.evidence,item['补拍依据']].some(text => String(text ?? '').toLocaleLowerCase('zh-CN').includes(sought))));
     byId('row-count').textContent = `${rows.length}/${ledger.rows.length} 条`;
     byId('work-rows').replaceChildren(rows.length ? rowsTable(rows,visibleOrder,{labels:order,choose:inspect}) : node('p','当前条件下没有匹配单据','empty'));
 }

@@ -3,6 +3,21 @@ from statistics import median
 
 from .contracts import Verification, Assessment, ModelReport
 from .slices import replay_slices
+from ..camera_backlog.reshoot import (
+    FRAME_LIMIT as RESHOOT_FRAME_LIMIT,
+    certify_feature_reshoot,
+    certify_minimum_reshoot,
+    certify_reshoot,
+    clear_frame_count,
+    evaluate_reshoot_sequence,
+    minimum_reshoot_count,
+    verification_requirement as frame_verification_requirement,
+)
+
+certify_reshoot_count = certify_reshoot
+reshoot_certificate = certify_reshoot
+sign_minimum_reshoot = certify_reshoot
+minimum_reshoot = certify_minimum_reshoot
 
 
 def physical_residual_scale(point):
@@ -108,3 +123,10 @@ def boundary_diagnostics(checks, threshold):
     return {'临界判断':'缺陷帧积压','实绩超线':actual_cases,'估计超线':predicted_cases,
             '额外复测':len(over),'漏查':len(under),'漏查偏差中位':median(under) if under else None,
             '额外复测偏差中位':median(over) if over else None}
+
+
+def __getattr__(name):
+    from ..camera_backlog import reshoot as _reshoot_compat
+    if hasattr(_reshoot_compat, name):
+        return getattr(_reshoot_compat, name)
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
